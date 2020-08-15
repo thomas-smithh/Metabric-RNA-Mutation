@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 from tqdm import tqdm_notebook as tqdm
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
 
 def plot_history(data):
@@ -50,9 +50,19 @@ def label_encode_cols(data):
     transformed_data = pd.concat(transformed_data, axis=1)
     return encoders, transformed_data
 
-def data_imputer(data):
-    target_cols = data.loc[:, data.isna().any()].columns
+
+
+
+def data_imputer(data, columns=None):
+    if columns is None:
+        target_cols = data.loc[:, data.isna().any()].columns
+    else:
+        target_cols=columns
+    
     X = data[[x for x in data.columns if x not in target_cols]]
+    null_col_headers = X.columns[X.isna().any()]
+    null_cols = X[null_col_headers]
+    X = X.drop(null_col_headers, 1)
     targets = data[target_cols]
     X_numerical = X.select_dtypes(exclude=['object'])
     X_object = X.select_dtypes(include=['object'])
@@ -84,6 +94,65 @@ def data_imputer(data):
         y_null = encoder.inverse_transform(dtc.predict(X_null))
         data.loc[data[col].isna(), col] = y_null
     model_metrics.index = target_cols
+    data = pd.concat([data, null_cols], axis=1)
     return data, model_metrics.applymap(lambda x: round(x, 2))
+
+def plot_confusion_matrix(cf_matrix):
+    group_names = ["True Neg", "False Pos", "False Neg", "True Pos"]
+    group_counts = ["{0:0.0f}".format(value) for value in cf_matrix.flatten()]
+    group_percentages = ["{0:.2%}".format(value) for value in cf_matrix.flatten() / np.sum(cf_matrix)]
+    labels = [f"{v1}\n{v2}\n{v3}" for v1, v2, v3 in zip(group_names,group_counts,group_percentages)]
+    labels = np.asarray(labels).reshape(2,2)
+    sns.heatmap(cf_matrix, annot=labels, fmt="", cmap='Blues')
+    
+def plot_roc_curve(roc_curve, optimal_point=False):
+    
+    optimal_threshold = roc_curve[roc_curve['Distance From Optimal'] == roc_curve['Distance From Optimal'].min()]
+    
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(roc_curve['FPR'], roc_curve['TPR'], linewidth=3)
+    ax.plot(np.arange(0, 1, 0.001), np.arange(0, 1, 0.001), linestyle='--', linewidth=3)
+    ax.grid()
+    ax.set_title('Receiver Operator Characteristic Curve')
+    ax.set_xlabel('FPR')
+    ax.set_ylabel('TPR')
+    
+    if optimal_point:
+        ax.scatter(optimal_threshold['FPR'], optimal_threshold['TPR'], color='C2', linewidth=3)
+    
+    return ax
+
+def plot_feature_importance(feature_importance, n_features):
+    feature_importance = feature_importance.iloc[:n_features, :]
+    fig, ax = plt.subplots(figsize=(5, int(n_features/2)))
+    sns.barplot(data=feature_importance, x='Importance', y='Feature', ax=ax)
+    ax.grid()
+    return ax
+
+def get_distance_from_optimal(roc_curve):
+    return ((1 - roc_curve['TPR'])**2 + (0 - roc_curve['FPR'])**2)**(1/2)
+                  
+def assess_model(model, X_test, y_test, features=None, feature_importance=True, binary_target=True, threshold=None):
+    if threshold is not None:
+        y_pred = (model.predict_proba(X_test)[:,1] >= threshold).astype(int)
+    else:
+        y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    metric_results = dict()
+    metric_results['classification_report'] = classification_report(y_test, y_pred)
+    metric_results['accuracy_score'] = accuracy_score(y_test, y_pred)
+    metric_results['cf_matrix'] = confusion_matrix(y_test, y_pred)
+    metric_results['roc_curve'] = roc_curve(y_test, y_prob)
+    metric_results['roc_curve'] = np.concatenate([x.reshape(-1, 1) for x in metric_results['roc_curve']], axis=1) 
+    metric_results['roc_curve'] = pd.DataFrame(metric_results['roc_curve'], columns=['FPR', 'TPR', 'Threshold'])
+    metric_results['roc_curve']['Distance From Optimal'] = get_distance_from_optimal(metric_results['roc_curve'])
+    metric_results['roc_curve_optimal_threshold'] = metric_results['roc_curve'][metric_results['roc_curve']['Distance From Optimal'] == metric_results['roc_curve']['Distance From Optimal'].min()].Threshold
+    metric_results['auc_score'] = roc_auc_score(y_test, y_prob)
+    if feature_importance:
+        metric_results['feature_importance'] = pd.DataFrame(np.array(list(zip(features, model.feature_importances_))), columns=['Feature', 'Importance'])
+        metric_results['feature_importance'].Importance = metric_results['feature_importance'].Importance.astype(float)
+        metric_results['feature_importance'] = metric_results['feature_importance'].sort_values('Importance', ascending=False)
+    
+    return metric_results
                                
                                
