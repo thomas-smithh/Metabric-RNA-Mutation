@@ -7,6 +7,43 @@ from sklearn.tree import DecisionTreeClassifier
 from tqdm import tqdm_notebook as tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+import scikitplot as skplt
+
+class data_preprocessor(BaseEstimator, TransformerMixin):
+    
+    def __init__(self):
+        self.ohe_column_names = None
+        self.one_hot_encoder = OneHotEncoder(handle_unknown='ignore')
+        
+    def fit(self, X, y=None):
+        X_categorical = X.select_dtypes(include=['object']).copy()
+        X_numerical = X.select_dtypes(exclude=['object']).copy()
+        X_categorical.fillna('missing', inplace=True)
+        ohe_feature_mapping = dict()
+        for i, col in enumerate(X_categorical.columns):
+            ohe_object_col_name = 'x{}'.format(i)
+            mapping = col
+            ohe_feature_mapping[ohe_object_col_name] = col
+        
+        X_categorical = self.one_hot_encoder.fit(X_categorical)
+        self.ohe_column_names = [ohe_feature_mapping[x[:x.find('_')]] + x[x.find('_'):] for x in self.one_hot_encoder.get_feature_names()]
+        return self
+        
+    def transform(self, X, y=None):
+        X_categorical = X.select_dtypes(include=['object']).copy()
+        X_numerical = X.select_dtypes(exclude=['object']).copy()
+        X_categorical.fillna('missing', inplace=True)
+        X_numerical.fillna(X_numerical.mean(), inplace=True)
+        X_categorical = self.one_hot_encoder.transform(X_categorical)
+        X_categorical = X_categorical.toarray()
+        X_categorical = pd.DataFrame(X_categorical, columns=self.ohe_column_names, index=X.index)
+        return pd.concat([X_numerical, X_categorical], 1)
+    
 
 def plot_history(data):
     epochs = len(data['val_loss'])
@@ -51,7 +88,17 @@ def label_encode_cols(data):
     return encoders, transformed_data
 
 
-
+def create_simple_data_transformer(numerical_features, categorical_features):
+    numeric_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='mean')),
+                                          ('scaler', StandardScaler())]
+                                  )
+    categorical_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+                                              ('onehot', OneHotEncoder(handle_unknown='ignore'))])
+    
+    preprocessor = ColumnTransformer(transformers=[('num', numeric_transformer, numerical_features),
+                                                   ('cat', categorical_transformer, categorical_features)])
+    
+    return preprocessor
 
 def data_imputer(data, columns=None):
     if columns is None:
@@ -97,12 +144,20 @@ def data_imputer(data, columns=None):
     data = pd.concat([data, null_cols], axis=1)
     return data, model_metrics.applymap(lambda x: round(x, 2))
 
+def preprocess_data(X):
+    X_categorical = X.select_dtypes(include=['object']).copy()
+    X_numerical = X.select_dtypes(exclude=['object']).copy()
+    X_numerical.fillna(X_numerical.mean(), inplace=True)
+    X_categorical = pd.get_dummies(X_categorical)
+    return pd.concat([X_numerical, X_categorical], 1)
+
 def plot_confusion_matrix(cf_matrix):
+    
     group_names = ["True Neg", "False Pos", "False Neg", "True Pos"]
     group_counts = ["{0:0.0f}".format(value) for value in cf_matrix.flatten()]
     group_percentages = ["{0:.2%}".format(value) for value in cf_matrix.flatten() / np.sum(cf_matrix)]
     labels = [f"{v1}\n{v2}\n{v3}" for v1, v2, v3 in zip(group_names,group_counts,group_percentages)]
-    labels = np.asarray(labels).reshape(2,2)
+    labels = np.asarray(labels).reshape(cf_matrix.shape)
     sns.heatmap(cf_matrix, annot=labels, fmt="", cmap='Blues')
     
 def plot_roc_curve(roc_curve, optimal_point=False):
@@ -142,12 +197,15 @@ def assess_model(model, X_test, y_test, features=None, feature_importance=True, 
     metric_results['classification_report'] = classification_report(y_test, y_pred)
     metric_results['accuracy_score'] = accuracy_score(y_test, y_pred)
     metric_results['cf_matrix'] = confusion_matrix(y_test, y_pred)
-    metric_results['roc_curve'] = roc_curve(y_test, y_prob)
-    metric_results['roc_curve'] = np.concatenate([x.reshape(-1, 1) for x in metric_results['roc_curve']], axis=1) 
-    metric_results['roc_curve'] = pd.DataFrame(metric_results['roc_curve'], columns=['FPR', 'TPR', 'Threshold'])
-    metric_results['roc_curve']['Distance From Optimal'] = get_distance_from_optimal(metric_results['roc_curve'])
-    metric_results['roc_curve_optimal_threshold'] = metric_results['roc_curve'][metric_results['roc_curve']['Distance From Optimal'] == metric_results['roc_curve']['Distance From Optimal'].min()].Threshold
-    metric_results['auc_score'] = roc_auc_score(y_test, y_prob)
+    
+    if binary_target:
+        metric_results['roc_curve'] = roc_curve(y_test, y_prob)
+        metric_results['roc_curve'] = np.concatenate([x.reshape(-1, 1) for x in metric_results['roc_curve']], axis=1) 
+        metric_results['roc_curve'] = pd.DataFrame(metric_results['roc_curve'], columns=['FPR', 'TPR', 'Threshold'])
+        metric_results['roc_curve']['Distance From Optimal'] = get_distance_from_optimal(metric_results['roc_curve'])
+        metric_results['roc_curve_optimal_threshold'] = metric_results['roc_curve'][metric_results['roc_curve']['Distance From Optimal'] == metric_results['roc_curve']['Distance From Optimal'].min()].Threshold
+        metric_results['auc_score'] = roc_auc_score(y_test, y_prob)
+
     if feature_importance:
         metric_results['feature_importance'] = pd.DataFrame(np.array(list(zip(features, model.feature_importances_))), columns=['Feature', 'Importance'])
         metric_results['feature_importance'].Importance = metric_results['feature_importance'].Importance.astype(float)
