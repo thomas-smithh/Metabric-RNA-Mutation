@@ -151,8 +151,8 @@ def preprocess_data(X):
     X_categorical = pd.get_dummies(X_categorical)
     return pd.concat([X_numerical, X_categorical], 1)
 
-def plot_confusion_matrix(cf_matrix):
-    
+def plot_confusion_matrix(cf_matrix, savefig=''):
+    plt.style.use('seaborn-bright')
     group_names = ["True Neg", "False Pos", "False Neg", "True Pos"]
     group_counts = ["{0:0.0f}".format(value) for value in cf_matrix.flatten()]
     group_percentages = ["{0:.2%}".format(value) for value in cf_matrix.flatten() / np.sum(cf_matrix)]
@@ -160,10 +160,14 @@ def plot_confusion_matrix(cf_matrix):
     labels = np.asarray(labels).reshape(cf_matrix.shape)
     sns.heatmap(cf_matrix, annot=labels, fmt="", cmap='Blues')
     
-def plot_roc_curve(roc_curve, optimal_point=False):
+    if savefig != '':
+        plt.savefig(savefig, bbox_inches='tight')
+    
+def plot_roc_curve(roc_curve, optimal_point=False, savefig=''):
+    
+    plt.style.use('seaborn-bright')
     
     optimal_threshold = roc_curve[roc_curve['Distance From Optimal'] == roc_curve['Distance From Optimal'].min()]
-    
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(roc_curve['FPR'], roc_curve['TPR'], linewidth=3)
     ax.plot(np.arange(0, 1, 0.001), np.arange(0, 1, 0.001), linestyle='--', linewidth=3)
@@ -174,14 +178,22 @@ def plot_roc_curve(roc_curve, optimal_point=False):
     
     if optimal_point:
         ax.scatter(optimal_threshold['FPR'], optimal_threshold['TPR'], color='C2', linewidth=3)
+        
+    if savefig != '':
+        plt.savefig(savefig, bbox_inches='tight')
     
     return ax
 
-def plot_feature_importance(feature_importance, n_features):
+def plot_feature_importance(feature_importance, n_features, savefig):
+    #plt.style.use('seaborn-bright')
     feature_importance = feature_importance.iloc[:n_features, :]
     fig, ax = plt.subplots(figsize=(5, int(n_features/2)))
-    sns.barplot(data=feature_importance, x='Importance', y='Feature', ax=ax)
+    sns.barplot(data=feature_importance, x='Importance', y='Feature', ax=ax, palette='bright')
     ax.grid()
+          
+    if savefig != '':
+        plt.savefig(savefig, bbox_inches='tight')
+    
     return ax
 
 def get_distance_from_optimal(roc_curve):
